@@ -1,156 +1,290 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { onMount, onDestroy } from "svelte";
 
-  let name = $state("");
-  let greetMsg = $state("");
-
-  async function greet(event: Event) {
-    event.preventDefault();
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsg = await invoke("greet", { name });
+  interface NetworkHealth {
+    status: string;
+    latency: number;
+    timestamp: string;
   }
+
+  interface GeoLocation {
+    ip: string;
+    city: string;
+    region: string;
+    country: string;
+    org: string;
+    timezone: string;
+  }
+
+  interface SystemStatus {
+    processes: number;
+    uptime: string;
+    load: string;
+    timestamp: string;
+  }
+
+  // Network Health Monitor
+  let networkStatus = $state({
+    status: "disconnected",
+    latency: 0,
+    timestamp: "",
+    history: [] as { status: string; latency: number; timestamp: string }[],
+    error: "",
+    isRunning: true,
+  });
+  let networkInterval: number;
+
+  // IP Geolocation
+  let geoLocation = $state({
+    ip: "",
+    city: "",
+    region: "",
+    country: "",
+    org: "",
+    timezone: "",
+    timestamp: "",
+    error: "",
+    isRunning: true,
+  });
+  let geoInterval: number;
+
+  // System Status
+  let systemStatus = $state({
+    processes: 0,
+    uptime: "",
+    load: "",
+    timestamp: "",
+    history: [] as { processes: number; timestamp: string }[],
+    error: "",
+    isRunning: true,
+  });
+  let systemInterval: number;
+
+  // Theme management
+  let isDark = $state(false);
+
+  function toggleTheme() {
+    isDark = !isDark;
+    if (isDark) {
+      document.documentElement.classList.add("dark");
+      localStorage.setItem("theme", "dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+      localStorage.setItem("theme", "light");
+    }
+  }
+
+  // Initialize theme
+  onMount(() => {
+    // Check localStorage first
+    const savedTheme = localStorage.getItem("theme");
+    if (savedTheme) {
+      isDark = savedTheme === "dark";
+      if (isDark) document.documentElement.classList.add("dark");
+    } else {
+      // Check system preference
+      isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      if (isDark) document.documentElement.classList.add("dark");
+    }
+  });
+
+  async function checkNetwork() {
+    try {
+      const result = await invoke<NetworkHealth>("check_network_health");
+      networkStatus.status = result.status;
+      networkStatus.latency = result.latency;
+      networkStatus.timestamp = result.timestamp;
+      networkStatus.error = "";
+
+      networkStatus.history = [
+        {
+          status: result.status,
+          latency: result.latency,
+          timestamp: result.timestamp,
+        },
+        ...networkStatus.history.slice(0, 4),
+      ];
+    } catch (e: unknown) {
+      networkStatus.error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function checkGeoLocation() {
+    try {
+      const result = await invoke<GeoLocation>("get_geo_location");
+      Object.assign(geoLocation, {
+        ...result,
+        error: "",
+        timestamp: new Date().toISOString(),
+      });
+    } catch (e: unknown) {
+      geoLocation.error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function checkSystemStatus() {
+    try {
+      const result = await invoke<SystemStatus>("get_system_status");
+      systemStatus.processes = result.processes;
+      systemStatus.uptime = result.uptime;
+      systemStatus.load = result.load;
+      systemStatus.timestamp = result.timestamp;
+      systemStatus.error = "";
+
+      systemStatus.history = [
+        { processes: result.processes, timestamp: result.timestamp },
+        ...systemStatus.history.slice(0, 4),
+      ];
+    } catch (e: unknown) {
+      systemStatus.error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  function toggleNetworkMonitor() {
+    if (networkStatus.isRunning) {
+      clearInterval(networkInterval);
+    } else {
+      checkNetwork();
+      networkInterval = setInterval(checkNetwork, 3000);
+    }
+    networkStatus.isRunning = !networkStatus.isRunning;
+  }
+
+  function toggleGeoLocation() {
+    if (geoLocation.isRunning) {
+      clearInterval(geoInterval);
+    } else {
+      checkGeoLocation();
+      geoInterval = setInterval(checkGeoLocation, 5000);
+    }
+    geoLocation.isRunning = !geoLocation.isRunning;
+  }
+
+  function toggleSystemStatus() {
+    if (systemStatus.isRunning) {
+      clearInterval(systemInterval);
+    } else {
+      checkSystemStatus();
+      systemInterval = setInterval(checkSystemStatus, 10000);
+    }
+    systemStatus.isRunning = !systemStatus.isRunning;
+  }
+
+  onMount(() => {
+    // Initial checks and start intervals
+    checkNetwork();
+    checkGeoLocation();
+    checkSystemStatus();
+
+    networkInterval = setInterval(checkNetwork, 3000);
+    geoInterval = setInterval(checkGeoLocation, 5000);
+    systemInterval = setInterval(checkSystemStatus, 10000);
+  });
+
+  onDestroy(() => {
+    clearInterval(networkInterval);
+    clearInterval(geoInterval);
+    clearInterval(systemInterval);
+  });
 </script>
 
-<main class="container">
-  <h1>Welcome to Tauri + Svelte</h1>
-
-  <div class="row">
-    <a href="https://vitejs.dev" target="_blank">
-      <img src="/vite.svg" class="logo vite" alt="Vite Logo" />
-    </a>
-    <a href="https://tauri.app" target="_blank">
-      <img src="/tauri.svg" class="logo tauri" alt="Tauri Logo" />
-    </a>
-    <a href="https://kit.svelte.dev" target="_blank">
-      <img src="/svelte.svg" class="logo svelte-kit" alt="SvelteKit Logo" />
-    </a>
+<div
+  class="fixed inset-0 font-mono bg-background text-primary text-sm p-5 flex flex-col"
+>
+  <div class="border-2 border-primary border-double p-4 mb-5">
+    <div class="flex justify-between items-center">
+      <h1 class="text-lg font-mono">System Dashboard</h1>
+      <button
+        class="bg-transparent border border-primary text-primary cursor-pointer font-mono px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800"
+        onclick={toggleTheme}
+        >{isDark ? "☀️ Light Mode" : "🌙 Dark Mode"}</button
+      >
+    </div>
   </div>
-  <p>Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
 
-  <form class="row" onsubmit={greet}>
-    <input id="greet-input" placeholder="Enter a name..." bind:value={name} />
-    <button type="submit">Greet</button>
-  </form>
-  <p>{greetMsg}</p>
-</main>
+  <div class="flex flex-col md:flex-row gap-5 flex-1">
+    <div class="flex-1 border-2 border-primary border-double p-4 flex flex-col">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-base font-mono">Network Health Monitor</h2>
+      </div>
+      <div class="space-y-2 flex-1">
+        <div class="font-mono">Status : {networkStatus.status}</div>
+        <div class="font-mono">Latency : {networkStatus.latency} ms</div>
+        <div class="font-mono">
+          Last Check : {networkStatus.timestamp.slice(0, 19)}
+        </div>
+        <div class="font-mono">Error : {networkStatus.error || "None"}</div>
+        <div class="border-t border-primary my-2"></div>
+        <div class="font-mono">Last 5 Results:</div>
+        {#each networkStatus.history as result, i}
+          <div class="font-mono">
+            {i + 1}. {result.status === "connected" ? "✓" : "×"}
+            {result.latency}ms at {result.timestamp.slice(11, 19)}
+          </div>
+        {/each}
+      </div>
+      <div class="border-t border-primary my-2"></div>
+      <button
+        class="bg-transparent border-none text-primary cursor-pointer font-mono p-0 hover:underline w-full text-left"
+        onclick={toggleNetworkMonitor}
+        >{networkStatus.isRunning ? "[Pause]" : "[Start]"}</button
+      >
+    </div>
 
-<style>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
+    <div class="flex-1 border-2 border-primary border-double p-4 flex flex-col">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-base font-mono">IP Geolocation Tracker</h2>
+      </div>
+      <div class="space-y-2 flex-1">
+        <div class="font-mono">IP : {geoLocation.ip}</div>
+        <div class="font-mono">City : {geoLocation.city}</div>
+        <div class="font-mono">Region : {geoLocation.region}</div>
+        <div class="font-mono">Country : {geoLocation.country}</div>
+        <div class="font-mono">Org : {geoLocation.org}</div>
+        <div class="font-mono">Timezone : {geoLocation.timezone}</div>
+        <div class="font-mono">
+          Last Check: {geoLocation.timestamp.slice(0, 19)}
+        </div>
+        <div class="font-mono">Error : {geoLocation.error || "None"}</div>
+      </div>
+      <div class="border-t border-primary my-2"></div>
+      <button
+        class="bg-transparent border-none text-primary cursor-pointer font-mono p-0 hover:underline w-full text-left"
+        onclick={toggleGeoLocation}
+        >{geoLocation.isRunning ? "[Pause]" : "[Start]"}</button
+      >
+    </div>
 
-.logo.svelte-kit:hover {
-  filter: drop-shadow(0 0 2em #ff3e00);
-}
-
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
-}
-
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
-  display: flex;
-  justify-content: center;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
-}
-
-input,
-button {
-  outline: none;
-}
-
-#greet-input {
-  margin-right: 5px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
-
-  a:hover {
-    color: #24c8db;
-  }
-
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
-  }
-}
-
-</style>
+    <div class="flex-1 border-2 border-primary border-double p-4 flex flex-col">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-base font-mono">System Status Checker</h2>
+      </div>
+      <div class="space-y-2 flex-1">
+        <div class="font-mono">Processes : {systemStatus.processes}</div>
+        <div class="font-mono">Uptime : {systemStatus.uptime}</div>
+        <div class="font-mono">Load : {systemStatus.load}</div>
+        <div class="font-mono">
+          Last Check: {systemStatus.timestamp.slice(0, 19)}
+        </div>
+        <div class="font-mono">Error : {systemStatus.error || "None"}</div>
+        <div class="border-t border-primary my-2"></div>
+        <div class="font-mono">Last 5 Results:</div>
+        {#each systemStatus.history as result, i}
+          <div class="font-mono">
+            {i + 1}. {result.processes} processes at {result.timestamp.slice(
+              11,
+              19
+            )}
+          </div>
+        {/each}
+      </div>
+      <div class="border-t border-primary my-2"></div>
+      <button
+        class="bg-transparent border-none text-primary cursor-pointer font-mono p-0 hover:underline w-full text-left"
+        onclick={toggleSystemStatus}
+        >{systemStatus.isRunning ? "[Pause]" : "[Start]"}</button
+      >
+    </div>
+  </div>
+</div>
